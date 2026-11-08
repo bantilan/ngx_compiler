@@ -265,90 +265,6 @@ if [ -f "$LOCAL_MPS_DIR/net/instaweb/instaweb.gyp" ]; then
   log "Applied local override for net/instaweb/instaweb.gyp from workspace."
 fi
 
-MPS_IMAGE_CC="$CLONE_DIR/testing-dependencies/mod_pagespeed/net/instaweb/rewriter/image.cc"
-AVIFENC_QUIET_PATCH_MODE="${AVIFENC_QUIET_PATCH_MODE:-auto}"
-
-patch_avifenc_quiet_flag() {
-  if [ ! -f "$MPS_IMAGE_CC" ]; then
-    return 0
-  fi
-  if ! grep -q 'avifenc --quiet' "$MPS_IMAGE_CC"; then
-    return 0
-  fi
-  run sed -i 's/avifenc --quiet --jobs/avifenc --jobs/g' "$MPS_IMAGE_CC"
-  log "Applied avifenc compatibility patch: removed --quiet in image.cc"
-}
-
-case "$AVIFENC_QUIET_PATCH_MODE" in
-  auto)
-    if command -v avifenc >/dev/null 2>&1; then
-      if ! avifenc --help 2>&1 | grep -q -- '--quiet'; then
-        patch_avifenc_quiet_flag
-      fi
-    fi
-    ;;
-  force)
-    patch_avifenc_quiet_flag
-    ;;
-  off)
-    ;;
-  *)
-    log "Invalid AVIFENC_QUIET_PATCH_MODE='$AVIFENC_QUIET_PATCH_MODE' (expected: auto|force|off)"
-    exit 1
-    ;;
-esac
-
-has_filter_name() {
-  local filter_name="$1"
-  local file_path="$2"
-  if command -v rg >/dev/null 2>&1; then
-    rg -q "$filter_name" "$file_path"
-  else
-    grep -q "$filter_name" "$file_path"
-  fi
-}
-
-apply_jsbuild_compat_fixes() {
-  local mps_dir="$1"
-  local closure_gypi="$mps_dir/net/instaweb/closure.gypi"
-  local instaweb_gyp="$mps_dir/net/instaweb/instaweb.gyp"
-
-  # Do not disable Closure primitive processing. It can generate broken runtime
-  # JS (e.g. missing goog.string namespace aliases in optimized bundles).
-  if [ -f "$closure_gypi" ] && grep -q -- '--process_closure_primitives=false' "$closure_gypi"; then
-    run sed -i "/--process_closure_primitives=false/d" "$closure_gypi"
-    log "Removed unsafe Closure flag --process_closure_primitives=false"
-  fi
-  if [ -f "$closure_gypi" ] && grep -q -- '--jscomp_off=undefinedVars' "$closure_gypi"; then
-    run sed -i "/--jscomp_off=undefinedVars/d" "$closure_gypi"
-    log "Removed temporary jscomp_off=undefinedVars suppression"
-  fi
-
-  if [ -f "$instaweb_gyp" ]; then
-    # Ensure goog/labs sources are included; they are required by newer
-    # closure-library useragent modules.
-    if grep -q "/goog/labs/" "$instaweb_gyp"; then
-      run sed -i '/\/goog\/labs\//d' "$instaweb_gyp"
-      log "Removed over-broad goog/labs exclusion in instaweb.gyp"
-    fi
-
-    # Keep closure include list deterministic and avoid known problematic trees.
-    if ! grep -q "/goog/demos/" "$instaweb_gyp"; then
-      run sed -i "/grep -v _test\\.js/a\\        '           | grep -v \"/goog/demos/\"'\\n        '           | grep -v \"/goog/testing/\"'\\n        '           | grep -v \"/goog/test_module.js\"'" "$instaweb_gyp"
-      log "Applied JS build compatibility patch in instaweb.gyp"
-    fi
-
-  fi
-}
-
-REQUIRED_FILTER="${NGX_PAGESPEED_REQUIRED_FILTER:-prioritize_lcp_images}"
-if [ -n "$REQUIRED_FILTER" ] && ! has_filter_name "$REQUIRED_FILTER" \
-  "$CLONE_DIR/testing-dependencies/mod_pagespeed/net/instaweb/rewriter/rewrite_filter_names.gperf"; then
-  log "Required filter '$REQUIRED_FILTER' not found in cloned source."
-  log "Set NGX_PAGESPEED_REPO to a repo/branch that contains it, or disable check with NGX_PAGESPEED_REQUIRED_FILTER=''."
-  exit 1
-fi
-
 SKIP_PSOL_BUILD="${SKIP_PSOL_BUILD:-0}"
 PSOL_TARBALL_PATH="${PSOL_TARBALL_PATH:-}"
 NGX_PAGESPEED_BUILD_JS="${NGX_PAGESPEED_BUILD_JS:-1}"
@@ -383,7 +299,6 @@ else
   if [ -n "$CLOSURE_DOWNLOAD_BASE" ]; then
     log "Using CLOSURE_DOWNLOAD_BASE=$CLOSURE_DOWNLOAD_BASE"
   fi
-  apply_jsbuild_compat_fixes "$CLONE_DIR/testing-dependencies/mod_pagespeed"
   if [ "$NGX_PAGESPEED_BUILD_JS" = "1" ] && [ "$NGX_PAGESPEED_FORCE_JS_REBUILD" = "1" ]; then
     run bash -lc "cd '$CLONE_DIR/testing-dependencies/mod_pagespeed' && rm -rf out && find net/instaweb/genfiles -type f \\( -name '*_dbg.js' -o -name '*_opt.js' \\) -delete"
     log "Forced JS rebuild by clearing prior generated JS artifacts."
