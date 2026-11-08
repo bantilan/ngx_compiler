@@ -240,6 +240,16 @@ if [ "$(git -C "$MODSECURITY_NGINX_DIR" rev-parse HEAD)" != "$MODSECURITY_NGINX_
 fi
 log "Using ModSecurity-nginx commit $MODSECURITY_NGINX_TARGET."
 
+# Apply the workspace's PSOL build helper when available, so fixes can be
+# tested locally before the ngx_pagespeed submodule revision is updated.
+LOCAL_NGX_PAGESPEED_DIR="${NGX_PAGESPEED_LOCAL_DIR:-$SCRIPT_DIR/../ngx_pagespeed}"
+if [ -f "$LOCAL_NGX_PAGESPEED_DIR/scripts/build_from_scratch_with_fixes.sh" ]; then
+  run cp "$LOCAL_NGX_PAGESPEED_DIR/scripts/build_from_scratch_with_fixes.sh" \
+    "$CLONE_DIR/scripts/build_from_scratch_with_fixes.sh"
+  run chmod +x "$CLONE_DIR/scripts/build_from_scratch_with_fixes.sh"
+  log "Applied local override for scripts/build_from_scratch_with_fixes.sh from workspace."
+fi
+
 # If a local mod_pagespeed checkout exists, prefer patched build
 # helper scripts from local workspace (useful before upstream push).
 LOCAL_MPS_DIR="$ROOT_DIR/mod_pagespeed"

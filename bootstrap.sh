@@ -87,6 +87,31 @@ else
   if [ ! -f "$NGINX_SOURCE_LIST" ] || ! grep -Fxq "$NGINX_SOURCE_LINE" "$NGINX_SOURCE_LIST"; then
     printf '%s\n' "$NGINX_SOURCE_LINE" | "${SUDO[@]}" tee "$NGINX_SOURCE_LIST" >/dev/null
   fi
+  # Keep Nginx source packages in the dedicated list above, avoiding duplicate
+  # deb-src entries when Ubuntu's deb822 sources also include nginx.org.
+  UBUNTU_SOURCES=/etc/apt/sources.list.d/ubuntu.sources
+  if [ -f "$UBUNTU_SOURCES" ]; then
+    "${SUDO[@]}" python3 - "$UBUNTU_SOURCES" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+blocks = re.split(r'(\n[ \t]*\n)', text)
+updated = False
+for index in range(0, len(blocks), 2):
+    block = blocks[index]
+    if re.search(r'(?m)^URIs:[ \t]*https://nginx\.org/packages/mainline/ubuntu[ \t]*$', block):
+        changed, count = re.subn(r'(?m)^Types:[ \t]*deb[ \t]+deb-src[ \t]*$', 'Types: deb', block)
+        if count:
+            blocks[index] = changed
+            updated = True
+if updated:
+    path.write_text(''.join(blocks))
+    print('Moved the nginx.org deb-src entry to nginx-mainline-source.list.')
+PY
+  fi
   "${SUDO[@]}" apt-get update
   touch "$SYSTEM_SETUP_MARKER"
 fi
