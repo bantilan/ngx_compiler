@@ -211,6 +211,13 @@ run git -C "$CLONE_DIR/testing-dependencies/mod_pagespeed" fetch origin "$MPS_RE
 run git -C "$CLONE_DIR/testing-dependencies/mod_pagespeed" checkout FETCH_HEAD
 run git -C "$CLONE_DIR" add testing-dependencies/mod_pagespeed
 
+# Stamp the exact source revisions into nginx -v/-V without changing the
+# upstream nginx version or its HTTP Server header.
+MPS_SHA="$(git -C "$CLONE_DIR/testing-dependencies/mod_pagespeed" rev-parse --short=7 HEAD)"
+NGX_SHA="$(git -C "$CLONE_DIR" rev-parse --short=7 HEAD)"
+NGINX_BUILD_METADATA="pagespeed-mps-${MPS_SHA}-ngx-${NGX_SHA}"
+log "Nginx build metadata: $NGINX_BUILD_METADATA"
+
 MODSECURITY_NGINX_DIR="$CLONE_DIR/testing-dependencies/ModSecurity-nginx"
 mkdir -p "$(dirname "$MODSECURITY_NGINX_DIR")"
 if git -C "$CLONE_DIR" ls-files --error-unmatch testing-dependencies/ModSecurity-nginx >/dev/null 2>&1; then
@@ -356,6 +363,7 @@ fi
 run sed -Ei 's|--add-dynamic-module=[^[:space:]]*ModSecurity-nginx[^[:space:]]*||g' "$RULES_FILE"
 run sed -Ei 's|  +| |g' "$RULES_FILE"
 run sed -i "s|\\./configure |./configure --add-dynamic-module=$MODSECURITY_NGINX_DIR |g" "$RULES_FILE"
+run sed -i "s|\\./configure |./configure --build=$NGINX_BUILD_METADATA |g" "$RULES_FILE"
 
 # Ensure nginx package ships built dynamic modules. Replace any stale/bad line
 # first so reruns are deterministic.
