@@ -119,7 +119,12 @@ fi
 if [ ! -d "$MPS_DIR/.git" ]; then
   [ ! -e "$MPS_DIR" ] || fail "$MPS_DIR exists but is not a Git checkout; move it aside and rerun."
   log "Cloning mod_pagespeed at $NGX_MPS_REF."
-  git clone "$NGX_MPS_REPO" "$MPS_DIR"
+  GIT_REFERENCE_CACHE="$SCRIPT_DIR/work/git-reference-cache.git"
+  if [ -d "$GIT_REFERENCE_CACHE" ]; then
+    git clone --reference-if-able "$GIT_REFERENCE_CACHE" "$NGX_MPS_REPO" "$MPS_DIR"
+  else
+    git clone "$NGX_MPS_REPO" "$MPS_DIR"
+  fi
 else
   [ -z "$(git -C "$MPS_DIR" status --porcelain)" ] || \
     fail "$MPS_DIR has local changes; preserve them before changing revisions."

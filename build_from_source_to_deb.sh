@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$SCRIPT_DIR"
 LOG_DIR="$SCRIPT_DIR/logs"
 WORK_DIR="$SCRIPT_DIR/work"
+GIT_REFERENCE_CACHE="$WORK_DIR/git-reference-cache.git"
 NGINX_SOURCE_WORKDIR="$ROOT_DIR/nginx-build"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 LOG_FILE="$LOG_DIR/ngx_compiler_${TIMESTAMP}.log"
@@ -23,6 +24,30 @@ DEBIAN_CHANGELOG=""
 mkdir -p "$LOG_DIR"
 mkdir -p "$WORK_DIR"
 touch "$LOG_FILE"
+
+# Keep Git objects from previous build workspaces in one local bare repository.
+# Fresh worktrees remain isolated, while clones/submodules can reuse unchanged
+# objects and fetch only revisions the cache does not already contain.
+if [ ! -d "$GIT_REFERENCE_CACHE" ]; then
+  git init --bare "$GIT_REFERENCE_CACHE" >/dev/null
+fi
+
+seed_git_reference_cache() {
+  local root marker repo index=0
+  local -a roots=("$WORK_DIR" "$SCRIPT_DIR/../ngx_pagespeed" "$SCRIPT_DIR/../mod_pagespeed")
+  for root in "${roots[@]}"; do
+    [ -d "$root" ] || continue
+    while IFS= read -r -d '' marker; do
+      repo="${marker%/.git}"
+      [ "$repo" != "$GIT_REFERENCE_CACHE" ] || continue
+      index=$((index + 1))
+      git -C "$GIT_REFERENCE_CACHE" fetch --quiet --no-tags "$repo" \
+        "+refs/heads/*:refs/local-cache/$index/heads/*" \
+        "+refs/tags/*:refs/local-cache/$index/tags/*" \
+        "HEAD:refs/local-cache/$index/HEAD" 2>/dev/null || true
+    done < <(find "$root" \( -name .git \( -type d -o -type f \) -print0 -prune \) 2>/dev/null)
+  done
+}
 
 case "$RESUME_BUILD" in
   0|1) ;;
@@ -48,6 +73,9 @@ require_cmd() {
 for cmd in bash git cp chmod tar ls tee find sed head rm sudo dpkg-buildpackage dpkg-parsechangelog nproc apt-get dpkg-query python3; do
   require_cmd "$cmd"
 done
+
+log "Using shared Git object cache: $GIT_REFERENCE_CACHE"
+seed_git_reference_cache
 
 ensure_nginx_source() {
   if [ -n "$NGINX_DEB_SRC_DIR" ] && [ -d "$NGINX_DEB_SRC_DIR/debian" ]; then
@@ -197,7 +225,7 @@ log "ModSecurity-nginx ref: $MODSECURITY_NGINX_REF"
 if [ "$RESUME_BUILD" = "0" ]; then
   log "Fresh clone target: $CLONE_DIR"
   log "Step 1/4: Clone ngx_pagespeed source (from scratch)."
-  run git clone "$REPO_URL" "$CLONE_DIR"
+  run git clone --reference-if-able "$GIT_REFERENCE_CACHE" "$REPO_URL" "$CLONE_DIR"
   printf '%s\n' "$CLONE_DIR" > "$LAST_BUILD_FILE"
   if [ -n "$REPO_REF" ] && [ "$REPO_REF" != "HEAD" ]; then
     run git -C "$CLONE_DIR" checkout "$REPO_REF"
@@ -207,7 +235,7 @@ else
   log "Reusing the saved ngx_pagespeed checkout; completed build outputs are preserved."
 fi
 
-run git -C "$CLONE_DIR" submodule update --init testing-dependencies/mod_pagespeed
+run git -C "$CLONE_DIR" submodule update --init --reference "$GIT_REFERENCE_CACHE" testing-dependencies/mod_pagespeed
 run git -C "$CLONE_DIR/testing-dependencies/mod_pagespeed" remote set-url origin "$MPS_REPO"
 run git -C "$CLONE_DIR/testing-dependencies/mod_pagespeed" fetch origin "$MPS_REF"
 run git -C "$CLONE_DIR/testing-dependencies/mod_pagespeed" checkout FETCH_HEAD
@@ -257,14 +285,14 @@ PY
 MODSECURITY_NGINX_DIR="$CLONE_DIR/testing-dependencies/ModSecurity-nginx"
 mkdir -p "$(dirname "$MODSECURITY_NGINX_DIR")"
 if git -C "$CLONE_DIR" ls-files --error-unmatch testing-dependencies/ModSecurity-nginx >/dev/null 2>&1; then
-  run git -C "$CLONE_DIR" submodule update --init -- testing-dependencies/ModSecurity-nginx
+  run git -C "$CLONE_DIR" submodule update --init --reference "$GIT_REFERENCE_CACHE" -- testing-dependencies/ModSecurity-nginx
 else
   if [ ! -d "$MODSECURITY_NGINX_DIR/.git" ] && [ ! -f "$MODSECURITY_NGINX_DIR/.git" ]; then
     [ ! -e "$MODSECURITY_NGINX_DIR" ] || {
       log "ModSecurity-nginx path exists but is not a Git checkout: $MODSECURITY_NGINX_DIR"
       exit 1
     }
-    run git clone "$MODSECURITY_NGINX_REPO" "$MODSECURITY_NGINX_DIR"
+    run git clone --reference-if-able "$GIT_REFERENCE_CACHE" "$MODSECURITY_NGINX_REPO" "$MODSECURITY_NGINX_DIR"
   fi
 fi
 [ -z "$(git -C "$MODSECURITY_NGINX_DIR" status --porcelain)" ] || {
@@ -347,7 +375,8 @@ else
     log "Forced JS rebuild by clearing prior generated JS artifacts."
   fi
   run chmod +x "$CLONE_DIR/scripts/build_from_scratch_with_fixes.sh"
-  run bash -lc "cd '$CLONE_DIR' && BUILD_JS='$NGX_PAGESPEED_BUILD_JS' CLOSURE_COMPILER_VERSION='$CLOSURE_COMPILER_VERSION' CLOSURE_DOWNLOAD_BASE='$CLOSURE_DOWNLOAD_BASE' JOBS=\${JOBS:-\$(nproc)} bash scripts/build_from_scratch_with_fixes.sh"
+  run bash -lc "cd '$CLONE_DIR' && GIT_REFERENCE_CACHE='$GIT_REFERENCE_CACHE' BUILD_JS='$NGX_PAGESPEED_BUILD_JS' CLOSURE_COMPILER_VERSION='$CLOSURE_COMPILER_VERSION' CLOSURE_DOWNLOAD_BASE='$CLOSURE_DOWNLOAD_BASE' JOBS=\${JOBS:-\$(nproc)} bash scripts/build_from_scratch_with_fixes.sh"
+  seed_git_reference_cache
   PSOL_TARBALL="$(ls -1t "$CLONE_DIR"/testing-dependencies/mod_pagespeed/psol-*.tar.gz 2>/dev/null | head -n 1 || true)"
 fi
 
