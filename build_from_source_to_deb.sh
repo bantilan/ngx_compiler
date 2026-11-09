@@ -213,8 +213,8 @@ run git -C "$CLONE_DIR/testing-dependencies/mod_pagespeed" fetch origin "$MPS_RE
 run git -C "$CLONE_DIR/testing-dependencies/mod_pagespeed" checkout FETCH_HEAD
 run git -C "$CLONE_DIR" add testing-dependencies/mod_pagespeed
 
-# Stamp the exact source revisions into nginx -v/-V without changing the
-# upstream nginx version or its HTTP Server header.
+# Stamp the exact source revisions into build/package metadata. The public
+# Nginx version string uses the upstream version plus ngx_pagespeed revision.
 MPS_SHA="$(git -C "$CLONE_DIR/testing-dependencies/mod_pagespeed" rev-parse HEAD)"
 MPS_SHA="${MPS_SHA:0:7}"
 NGX_SHA="$(git -C "$CLONE_DIR" rev-parse HEAD)"
@@ -234,7 +234,25 @@ DEBIAN_REVISION="${DEBIAN_REVISION%%-pagespeed-mps-*}"
 }
 NGINX_PACKAGE_VERSION="${UPSTREAM_NGINX_VERSION}-${DEBIAN_REVISION}-${NGINX_BUILD_METADATA}"
 NGINX_DISPLAY_VERSION="nginx/${UPSTREAM_NGINX_VERSION} (${NGINX_BUILD_METADATA})"
+NGINX_SERVER_VERSION="nginx/${UPSTREAM_NGINX_VERSION}-${NGX_SHA}"
 log "Nginx package version: $NGINX_PACKAGE_VERSION"
+
+# NGINX_VER is used by nginx -v and the HTTP Server response header.
+run python3 - "$NGINX_DEB_SRC_DIR/src/core/nginx.h" "$NGINX_SERVER_VERSION" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+updated, count = re.subn(
+    r'(?m)^#define NGINX_VER[ \t]+.*$',
+    '#define NGINX_VER "%s"' % sys.argv[2], text)
+if count != 1:
+    raise SystemExit('Expected exactly one NGINX_VER definition in %s; found %d'
+                     % (path, count))
+path.write_text(updated)
+PY
 
 MODSECURITY_NGINX_DIR="$CLONE_DIR/testing-dependencies/ModSecurity-nginx"
 mkdir -p "$(dirname "$MODSECURITY_NGINX_DIR")"
