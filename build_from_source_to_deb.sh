@@ -18,6 +18,7 @@ RULES_FILE=""
 DEBIAN_NGINX_CONF=""
 DEBIAN_NGINX_SERVICE=""
 DEBIAN_NGINX_DEBUG_SERVICE=""
+DEBIAN_CHANGELOG=""
 
 mkdir -p "$LOG_DIR"
 mkdir -p "$WORK_DIR"
@@ -44,7 +45,7 @@ require_cmd() {
   }
 }
 
-for cmd in bash git cp chmod tar ls tee find sed head rm sudo dpkg-buildpackage nproc apt-get dpkg-query; do
+for cmd in bash git cp chmod tar ls tee find sed head rm sudo dpkg-buildpackage dpkg-parsechangelog nproc apt-get dpkg-query python3; do
   require_cmd "$cmd"
 done
 
@@ -100,6 +101,7 @@ set_nginx_paths() {
   DEBIAN_NGINX_CONF="$NGINX_DEB_SRC_DIR/debian/nginx.conf"
   DEBIAN_NGINX_SERVICE="$NGINX_DEB_SRC_DIR/debian/nginx.service"
   DEBIAN_NGINX_DEBUG_SERVICE="$NGINX_DEB_SRC_DIR/debian/nginx-debug.service"
+  DEBIAN_CHANGELOG="$NGINX_DEB_SRC_DIR/debian/changelog"
 }
 
 ensure_nginx_source
@@ -213,10 +215,26 @@ run git -C "$CLONE_DIR" add testing-dependencies/mod_pagespeed
 
 # Stamp the exact source revisions into nginx -v/-V without changing the
 # upstream nginx version or its HTTP Server header.
-MPS_SHA="$(git -C "$CLONE_DIR/testing-dependencies/mod_pagespeed" rev-parse --short=7 HEAD)"
-NGX_SHA="$(git -C "$CLONE_DIR" rev-parse --short=7 HEAD)"
+MPS_SHA="$(git -C "$CLONE_DIR/testing-dependencies/mod_pagespeed" rev-parse HEAD)"
+MPS_SHA="${MPS_SHA:0:7}"
+NGX_SHA="$(git -C "$CLONE_DIR" rev-parse HEAD)"
+NGX_SHA="${NGX_SHA:0:7}"
 NGINX_BUILD_METADATA="pagespeed-mps-${MPS_SHA}-ngx-${NGX_SHA}"
 log "Nginx build metadata: $NGINX_BUILD_METADATA"
+
+SOURCE_PACKAGE_VERSION="$(dpkg-parsechangelog -l "$DEBIAN_CHANGELOG" -S Version)"
+VERSION_WITHOUT_EPOCH="${SOURCE_PACKAGE_VERSION#*:}"
+UPSTREAM_NGINX_VERSION="${VERSION_WITHOUT_EPOCH%%-*}"
+DEBIAN_REVISION="${VERSION_WITHOUT_EPOCH#*-}"
+DEBIAN_REVISION="${DEBIAN_REVISION%%~*}"
+DEBIAN_REVISION="${DEBIAN_REVISION%%-pagespeed-mps-*}"
+[ -n "$UPSTREAM_NGINX_VERSION" ] && [ -n "$DEBIAN_REVISION" ] || {
+  log "Could not derive the upstream version and Debian revision from $SOURCE_PACKAGE_VERSION"
+  exit 1
+}
+NGINX_PACKAGE_VERSION="${UPSTREAM_NGINX_VERSION}-${DEBIAN_REVISION}-${NGINX_BUILD_METADATA}"
+NGINX_DISPLAY_VERSION="nginx/${UPSTREAM_NGINX_VERSION} (${NGINX_BUILD_METADATA})"
+log "Nginx package version: $NGINX_PACKAGE_VERSION"
 
 MODSECURITY_NGINX_DIR="$CLONE_DIR/testing-dependencies/ModSecurity-nginx"
 mkdir -p "$(dirname "$MODSECURITY_NGINX_DIR")"
@@ -333,9 +351,11 @@ fi
 RULES_BACKUP="${RULES_FILE}.ngx_compiler_backup_${TIMESTAMP}"
 NGINX_SERVICE_BACKUP="${DEBIAN_NGINX_SERVICE}.ngx_compiler_backup_${TIMESTAMP}"
 NGINX_DEBUG_SERVICE_BACKUP="${DEBIAN_NGINX_DEBUG_SERVICE}.ngx_compiler_backup_${TIMESTAMP}"
+CHANGELOG_BACKUP="${DEBIAN_CHANGELOG}.ngx_compiler_backup_${TIMESTAMP}"
 run cp "$RULES_FILE" "$RULES_BACKUP"
 run cp "$DEBIAN_NGINX_SERVICE" "$NGINX_SERVICE_BACKUP"
 run cp "$DEBIAN_NGINX_DEBUG_SERVICE" "$NGINX_DEBUG_SERVICE_BACKUP"
+run cp "$DEBIAN_CHANGELOG" "$CHANGELOG_BACKUP"
 cleanup_rules() {
   if [ -f "$RULES_BACKUP" ]; then
     cp "$RULES_BACKUP" "$RULES_FILE"
@@ -346,8 +366,26 @@ cleanup_rules() {
   if [ -f "$NGINX_DEBUG_SERVICE_BACKUP" ]; then
     cp "$NGINX_DEBUG_SERVICE_BACKUP" "$DEBIAN_NGINX_DEBUG_SERVICE"
   fi
+  if [ -f "$CHANGELOG_BACKUP" ]; then
+    cp "$CHANGELOG_BACKUP" "$DEBIAN_CHANGELOG"
+  fi
 }
 trap cleanup_rules EXIT
+# Put the source commits in the Debian version so every binary package and
+# artifact filename carries the exact module revisions used for this build.
+run python3 - "$DEBIAN_CHANGELOG" "$NGINX_PACKAGE_VERSION" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+updated, count = re.subn(
+    r'(?m)^nginx \([^)]*\)', 'nginx (%s)' % sys.argv[2], text, count=1)
+if count != 1:
+    raise SystemExit('Could not update the leading nginx changelog entry')
+path.write_text(updated)
+PY
 # Ensure Debian rules points ngx_pagespeed to the fresh clone.
 # Some rule templates already use NGX_PAGESPEED_MODULE; in that case set it.
 if grep -q '^NGX_PAGESPEED_MODULE[[:space:]]*=' "$RULES_FILE"; then
@@ -402,6 +440,11 @@ fi
 
 log "Debian package output files:"
 for deb in "${DEBS[@]}"; do
+  PACKAGE_VERSION="$(dpkg-deb -f "$deb" Version)"
+  if [ "$PACKAGE_VERSION" != "$NGINX_PACKAGE_VERSION" ]; then
+    log "ERROR: $deb has version $PACKAGE_VERSION, expected $NGINX_PACKAGE_VERSION"
+    exit 1
+  fi
   log "DEB_OUTPUT: $deb"
 done
 
@@ -431,6 +474,10 @@ if [ "$FOUND_MODSECURITY_SO" -ne 1 ]; then
   exit 1
 fi
 
+mkdir -p "$ROOT_DIR/artifacts"
+printf '%s\n' "$NGINX_DISPLAY_VERSION" > "$ROOT_DIR/artifacts/nginx_version"
+log "Version record written: $ROOT_DIR/artifacts/nginx_version"
+
 if [ "$DPKG_EXIT" -ne 0 ]; then
   log "Packaging command still returned non-zero ($DPKG_EXIT), but .deb files were found above."
 else
@@ -441,6 +488,7 @@ cleanup_rules
 rm -f "$RULES_BACKUP"
 rm -f "$NGINX_SERVICE_BACKUP"
 rm -f "$NGINX_DEBUG_SERVICE_BACKUP"
+rm -f "$CHANGELOG_BACKUP"
 trap - EXIT
 
 log "Done."

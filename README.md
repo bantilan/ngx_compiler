@@ -10,6 +10,8 @@ bash "$HOME/ngx_compiler/bootstrap.sh"
 
 The script installs build prerequisites (including `libmodsecurity-dev`), configures nginx.org's mainline source repository, fetches the latest `master` revisions of `ngx_pagespeed` and `mod_pagespeed`, downloads the latest available nginx mainline Debian source, builds the packages, and collects the `.deb` packages and PSOL tarball in `artifacts/` beside the script. The compiler also fetches the latest `master` of the ModSecurity-nginx connector, builds it against libmodsecurity, and verifies its `.so` is in the output packages.
 
+The Nginx build string and every Debian package version include the seven-character `mod_pagespeed` and `ngx_pagespeed` commit IDs. The `artifacts/nginx_version` file records the `nginx -v` style version string; package files include the same revisions, for example `nginx_1.31.8-1-pagespeed-mps-d16d084-ngx-61c1c5a_amd64.deb`.
+
 To activate the connector after installation, load `modules/ngx_http_modsecurity_module.so` in the main Nginx context and configure ModSecurity rules. Building the connector alone does not turn the WAF on.
 
 Requirements: Ubuntu 24.04 Noble on x86_64, an internet connection, and a user account with `sudo` access. Do not run the script itself with `sudo`; it invokes `sudo` for system package setup.
