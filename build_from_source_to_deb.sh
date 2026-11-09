@@ -2,10 +2,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$SCRIPT_DIR"
-LOG_DIR="$SCRIPT_DIR/logs"
-WORK_DIR="$SCRIPT_DIR/work"
-GIT_REFERENCE_CACHE="$WORK_DIR/git-reference-cache.git"
+WORK_DIR="${NGX_COMPILER_WORK_DIR:-$PWD}"
+ROOT_DIR="$WORK_DIR"
+LOG_DIR="$WORK_DIR/logs"
+GIT_REFERENCE_CACHE="$WORK_DIR/.git-reference-cache.git"
 NGINX_SOURCE_WORKDIR="$ROOT_DIR/nginx-build"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 LOG_FILE="$LOG_DIR/ngx_compiler_${TIMESTAMP}.log"
@@ -34,7 +34,7 @@ fi
 
 seed_git_reference_cache() {
   local root marker repo index=0
-  local -a roots=("$WORK_DIR" "$SCRIPT_DIR/../ngx_pagespeed" "$SCRIPT_DIR/../mod_pagespeed")
+  local -a roots=("$WORK_DIR")
   for root in "${roots[@]}"; do
     [ -d "$root" ] || continue
     while IFS= read -r -d '' marker; do
@@ -323,7 +323,7 @@ fi
 
 # If a local mod_pagespeed checkout exists, prefer patched build
 # helper scripts from local workspace (useful before upstream push).
-LOCAL_MPS_DIR="$ROOT_DIR/mod_pagespeed"
+LOCAL_MPS_DIR="$WORK_DIR/mod_pagespeed"
 if [ -f "$LOCAL_MPS_DIR/install/build_psol.sh" ]; then
   run cp "$LOCAL_MPS_DIR/install/build_psol.sh" \
     "$CLONE_DIR/testing-dependencies/mod_pagespeed/install/build_psol.sh"
@@ -355,9 +355,6 @@ if [ "$SKIP_PSOL_BUILD" = "1" ]; then
     PSOL_TARBALL="$(ls -1t "$CLONE_DIR"/testing-dependencies/mod_pagespeed/psol-*.tar.gz 2>/dev/null | head -n 1 || true)"
     if [ -z "$PSOL_TARBALL" ]; then
       PSOL_TARBALL="$(ls -1t "$WORK_DIR"/ngx_pagespeed-*/testing-dependencies/mod_pagespeed/psol-*.tar.gz 2>/dev/null | head -n 1 || true)"
-    fi
-    if [ -z "$PSOL_TARBALL" ] && [ -d "$ROOT_DIR/ngx_pagespeed/testing-dependencies/mod_pagespeed" ]; then
-      PSOL_TARBALL="$(ls -1t "$ROOT_DIR"/ngx_pagespeed/testing-dependencies/mod_pagespeed/psol-*.tar.gz 2>/dev/null | head -n 1 || true)"
     fi
   fi
 else

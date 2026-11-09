@@ -3,16 +3,18 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 COMPILER_SCRIPT="$SCRIPT_DIR/build_from_source_to_deb.sh"
-MPS_DIR="$SCRIPT_DIR/mod_pagespeed"
-ARTIFACT_DIR="$SCRIPT_DIR/artifacts"
-SYSTEM_SETUP_MARKER="$SCRIPT_DIR/.system_setup_complete"
+BUILD_WORK_DIR="${NGX_COMPILER_WORK_DIR:-$PWD}"
+MPS_DIR="$BUILD_WORK_DIR/mod_pagespeed"
+ARTIFACT_DIR="$BUILD_WORK_DIR/artifacts"
+GIT_REFERENCE_CACHE="$BUILD_WORK_DIR/.git-reference-cache.git"
+SYSTEM_SETUP_MARKER="$BUILD_WORK_DIR/.system_setup_complete"
 RESUME_BUILD="${RESUME_BUILD:-0}"
 SYSTEM_SETUP_DONE=0
 if [ "$RESUME_BUILD" = "1" ]; then
   if [ -f "$SYSTEM_SETUP_MARKER" ]; then
     SYSTEM_SETUP_DONE=1
   else
-    for prior_clone in "$SCRIPT_DIR/work"/ngx_pagespeed-*; do
+    for prior_clone in "$BUILD_WORK_DIR"/ngx_pagespeed-*; do
       if [ -d "$prior_clone/.git" ]; then
         # Older script versions did not write the setup marker. A compiler
         # workspace proves bootstrap passed package and nginx-source setup.
@@ -119,7 +121,6 @@ fi
 if [ ! -d "$MPS_DIR/.git" ]; then
   [ ! -e "$MPS_DIR" ] || fail "$MPS_DIR exists but is not a Git checkout; move it aside and rerun."
   log "Cloning mod_pagespeed at $NGX_MPS_REF."
-  GIT_REFERENCE_CACHE="$SCRIPT_DIR/work/git-reference-cache.git"
   if [ -d "$GIT_REFERENCE_CACHE" ]; then
     git clone --reference-if-able "$GIT_REFERENCE_CACHE" "$NGX_MPS_REPO" "$MPS_DIR"
   else
@@ -152,11 +153,11 @@ RESUME_BUILD_DIR="${RESUME_BUILD_DIR:-}" \
 
 mkdir -p "$ARTIFACT_DIR"
 shopt -s nullglob
-DEB_FILES=("$SCRIPT_DIR"/nginx-build/*.deb)
+DEB_FILES=("$BUILD_WORK_DIR"/nginx-build/*.deb)
 [ "${#DEB_FILES[@]}" -gt 0 ] || fail "The compiler finished without producing Debian packages."
 cp -f -- "${DEB_FILES[@]}" "$ARTIFACT_DIR/"
 
-PSOL_TARBALL="$(find "$SCRIPT_DIR/work" -type f -name 'psol-*.tar.gz' -printf '%T@ %p\n' | sort -nr | head -n 1 | cut -d' ' -f2-)"
+PSOL_TARBALL="$(find "$BUILD_WORK_DIR" -type f -name 'psol-*.tar.gz' -printf '%T@ %p\n' | sort -nr | head -n 1 | cut -d' ' -f2-)"
 if [ -n "$PSOL_TARBALL" ]; then
   cp -f -- "$PSOL_TARBALL" "$ARTIFACT_DIR/"
 fi
